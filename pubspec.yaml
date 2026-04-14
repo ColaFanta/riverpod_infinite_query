@@ -1,0 +1,29 @@
+name: riverpod_infinite_query
+description: >
+  Lightweight infinite query utilities for Riverpod and Flutter. Compose paged FutureProviders while keeping Riverpod cache, refresh, and invalidation behavior.
+
+version: 0.1.0
+homepage: https://github.com/ColaFanta/riverpod_infinite_query
+repository: https://github.com/ColaFanta/riverpod_infinite_query
+topics:
+  - riverpod
+  - state-management
+  - infinite-scroll
+  - infinite-query
+  - flutter-hooks
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_hooks: any
+  freezed_annotation: ^3.1.0
+  hooks_riverpod: ^3.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  freezed: ^3.2.5
+  lints: ^6.1.0

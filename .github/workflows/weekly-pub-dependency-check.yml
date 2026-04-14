@@ -1,0 +1,103 @@
+name: Weekly Pub Dependency Check
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pub-outdated:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Check package root dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          flutter pub get
+          flutter pub outdated --json > reports/root-outdated.json
+
+      - name: Check example dependencies
+        shell: bash
+        working-directory: example
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter pub outdated --json > ../reports/example-outdated.json
+
+      - name: Build dependency summary
+        shell: bash
+        run: |
+          python <<'PY'
+          import json
+          from pathlib import Path
+
+          reports = [
+              ("Package root", Path("reports/root-outdated.json")),
+              ("Example app", Path("reports/example-outdated.json")),
+          ]
+
+          def outdated_packages(payload):
+              packages = payload.get("packages", [])
+              return [
+                  {
+                      "package": item["package"],
+                      "kind": item["kind"],
+                      "current": item.get("current", {}).get("version", "-"),
+                      "resolvable": item.get("resolvable", {}).get("version", "-"),
+                      "latest": item.get("latest", {}).get("version", "-"),
+                  }
+                  for item in packages
+                  if item.get("current", {}).get("version") != item.get("latest", {}).get("version")
+              ]
+
+          summary_lines = ["## Weekly pub dependency report", ""]
+
+          for title, path in reports:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              packages = outdated_packages(payload)
+              summary_lines.append(f"### {title}")
+              summary_lines.append("")
+
+              if not packages:
+                  summary_lines.append("No outdated packages found.")
+                  summary_lines.append("")
+                  continue
+
+              summary_lines.append(f"Found {len(packages)} outdated packages.")
+              summary_lines.append("")
+              summary_lines.append("| Package | Kind | Current | Resolvable | Latest |")
+              summary_lines.append("| --- | --- | --- | --- | --- |")
+
+              for package in packages:
+                  summary_lines.append(
+                      f"| {package['package']} | {package['kind']} | {package['current']} | {package['resolvable']} | {package['latest']} |"
+                  )
+
+              summary_lines.append("")
+
+          summary = "\n".join(summary_lines).rstrip() + "\n"
+          Path("reports/summary.md").write_text(summary, encoding="utf-8")
+          print(summary)
+          PY
+
+          cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dependency reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-dependency-report
+          path: reports/

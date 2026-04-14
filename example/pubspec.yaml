@@ -1,0 +1,20 @@
+name: riverpod_infinite_query_example
+publish_to: none
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_hooks: ^0.21.3+1
+  hooks_riverpod: ^3.2.1
+  riverpod_infinite_query:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

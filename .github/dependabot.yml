@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: pub
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - pub
+    commit-message:
+      prefix: deps
+    groups:
+      root-pub-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: pub
+    directory: "/example"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:15"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - pub
+    commit-message:
+      prefix: deps(example)
+    groups:
+      example-pub-dependencies:
+        patterns:
+          - "*"

@@ -1,0 +1,8 @@
+.dart_tool/
+.vscode/
+.fvm/
+.github/
+build/
+test/
+.fvmrc
+.gitattributes

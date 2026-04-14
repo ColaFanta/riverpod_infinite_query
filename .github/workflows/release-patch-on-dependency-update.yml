@@ -1,0 +1,166 @@
+name: Release Patch On Dependency Update
+
+on:
+  pull_request_target:
+    types:
+      - closed
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: dependency-release-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+
+      - name: Detect package manifest changes
+        id: manifest
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            const changedFiles = files.map((file) => file.filename);
+            const shouldRelease = changedFiles.includes('pubspec.yaml');
+
+            core.info(`Changed files: ${changedFiles.join(', ')}`);
+            core.setOutput('should_release', String(shouldRelease));
+
+      - name: Skip non-package dependency updates
+        if: steps.manifest.outputs.should_release != 'true'
+        shell: bash
+        run: |
+          echo "Merged dependency update did not change the published package manifest, so no release was created." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip already released pull requests
+        id: duplicate
+        if: steps.manifest.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git log --format=%s --grep="for #${{ github.event.pull_request.number }}$" -n 1 > /dev/null; then
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+            echo "A release commit already exists for this pull request." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Flutter
+        if: >-
+          steps.manifest.outputs.should_release == 'true' &&
+          steps.duplicate.outputs.already_released != 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Validate dependency update with tests
+        if: >-
+          steps.manifest.outputs.should_release == 'true' &&
+          steps.duplicate.outputs.already_released != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter test
+
+      - name: Bump patch version and update changelog
+        id: bump
+        if: >-
+          steps.manifest.outputs.should_release == 'true' &&
+          steps.duplicate.outputs.already_released != 'true'
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          pubspec_path = Path("pubspec.yaml")
+          changelog_path = Path("CHANGELOG.md")
+
+          pubspec = pubspec_path.read_text(encoding="utf-8")
+          version_match = re.search(r"^version:\s*(\d+)\.(\d+)\.(\d+)([^\n]*)$", pubspec, re.MULTILINE)
+          if version_match is None:
+              raise SystemExit("Could not find a semantic version in pubspec.yaml")
+
+          major, minor, patch = map(int, version_match.group(1, 2, 3))
+          suffix = version_match.group(4)
+          new_version = f"{major}.{minor}.{patch + 1}{suffix}"
+
+          updated_pubspec = re.sub(
+              r"^version:\s*.*$",
+              f"version: {new_version}",
+              pubspec,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          pubspec_path.write_text(updated_pubspec, encoding="utf-8")
+
+          changelog = changelog_path.read_text(encoding="utf-8")
+          changelog_header = "# Changelog\n\n"
+          if changelog_header not in changelog:
+              raise SystemExit("Could not find the changelog header in CHANGELOG.md")
+
+          entry = (
+              f"## {new_version}\n\n"
+              f"- Patch release triggered by dependency updates in #{os.environ['PR_NUMBER']} ({os.environ['PR_TITLE']}).\n\n"
+          )
+          changelog_path.write_text(changelog.replace(changelog_header, changelog_header + entry, 1), encoding="utf-8")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"version={new_version}\n")
+          PY
+
+      - name: Commit and tag release
+        if: >-
+          steps.manifest.outputs.should_release == 'true' &&
+          steps.duplicate.outputs.already_released != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add pubspec.yaml CHANGELOG.md
+          git commit -m "chore(release): ${{ steps.bump.outputs.version }} for #${{ github.event.pull_request.number }}"
+          git tag -a "v${{ steps.bump.outputs.version }}" -m "v${{ steps.bump.outputs.version }}"
+
+          git push origin HEAD:${{ github.event.pull_request.base.ref }}
+          git push origin "v${{ steps.bump.outputs.version }}"
+
+      - name: Create GitHub release
+        if: >-
+          steps.manifest.outputs.should_release == 'true' &&
+          steps.duplicate.outputs.already_released != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.version }}
+          name: v${{ steps.bump.outputs.version }}
+          generate_release_notes: true
+          body: |
+            Patch release triggered automatically after dependency update PR #${{ github.event.pull_request.number }}.
